@@ -25,7 +25,7 @@ services:
     depends_on:
       - motor-db
 
-  # SERVICIO 3: Tu aplicación Node.js (EL QUE DABA ERROR)
+  # SERVICIO 3: Tu aplicación Node.js
   motor-app:
     build: ./backend
     container_name: motor-app
@@ -33,7 +33,7 @@ services:
       - "3000:3000"
     volumes:
       - ./backend:/app
-      - /app/node_modules # Esto protege los módulos internos del contenedor
+      - /app/node_modules
     command: npm run dev
     env_file:
       - .env
@@ -45,3 +45,15 @@ services:
       - DB_NAME=motor_social_db
     depends_on:
       - motor-db
+
+  # SERVICIO 4: Frontend en React (CORREGIDO LA INDENTACIÓN)
+  motor-front:
+    build: ./frontend
+    container_name: motor-front
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - motor-app

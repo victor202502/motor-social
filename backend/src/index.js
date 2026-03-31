@@ -3,12 +3,13 @@ const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
-
 const app = express();
+const cors = require('cors'); // Al principio
+app.use(cors()); // Antes de las rutas
+app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const SECRET_KEY = process.env.JWT_SECRET;
 
-app.use(express.json());
 
 // ==========================================
 // MIDDLEWARES (Los "Porteros")
