@@ -1,84 +1,51 @@
+require('dotenv').config();
 const express = require('express');
-const pool = require('./db');
-const app = express();
-const PORT = 3000;
-const bcrypt = require('bcrypt'); // <--- 1. Importar bcrypt
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const SECRET_KEY = process.env.JWT_SECRET; // Usar la del archivo .env
+const pool = require('./db');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.JWT_SECRET;
 
 app.use(express.json());
 
-// --- MIDDLEWARE DE AUTENTICACIÓN ---
+// ==========================================
+// MIDDLEWARES (Los "Porteros")
+// ==========================================
 const autenticarToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Formato: "Bearer TOKEN"
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) return res.status(401).json({ error: "No hay token, acceso denegado" });
 
     jwt.verify(token, SECRET_KEY, (err, usuario) => {
         if (err) return res.status(403).json({ error: "Token no válido o expirado" });
-        req.usuario = usuario; // Guardamos los datos del usuario en la petición
-        next(); // Continuamos a la ruta
+        req.usuario = usuario;
+        next();
     });
 };
 
-// Ruta de prueba: Obtener usuarios de la base de datos
-app.get('/usuarios', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM usuarios');
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Error en el servidor');
-  }
-});
+// ==========================================
+// RUTAS GET (Consultas)
+// ==========================================
 
+// 1. Salud del servidor
 app.get('/', (req, res) => {
-  res.send('API con Auto-Reload funcionando! 🚀');
+    res.send('API de Red Social del Motor funcionando 🚗💨');
 });
 
-// Ruta para CREAR un nuevo usuario
-app.post('/usuarios', async (req, res) => {
-    const { nombre, email, password } = req.body;
-    
+// 2. Listar todos los usuarios (público)
+app.get('/usuarios', async (req, res) => {
     try {
-        // 2. Encriptar la contraseña (10 es el nivel de seguridad)
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-        // 3. Guardar la contraseña encriptada (hashedPassword)
-        const query = 'INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email';
-        const values = [nombre, email, hashedPassword];
-        
-        const result = await pool.query(query, values);
-        res.status(201).json(result.rows[0]);
+        const result = await pool.query('SELECT id, nombre, email, fecha_registro FROM usuarios');
+        res.json(result.rows);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error al crear usuario" });
+        res.status(500).json({ error: "Error al obtener usuarios" });
     }
 });
 
-// Ruta para registrar un coche vinculado a un usuario
-// Ahora usamos 'autenticarToken' antes de la función final
-app.post('/coches', autenticarToken, async (req, res) => {
-    const { marca, modelo, año } = req.body;
-    const propietario_id = req.usuario.id; // Extraído directamente del Token
-
-    try {
-        const query = 'INSERT INTO coches (marca, modelo, año, propietario_id) VALUES ($1, $2, $3, $4) RETURNING *';
-        const values = [marca, modelo, año, propietario_id];
-        const result = await pool.query(query, values);
-        
-        res.status(201).json({
-            mensaje: "Coche registrado por " + req.usuario.nombre,
-            coche: result.rows[0]
-        });
-    } catch (err) {
-        res.status(500).json({ error: "Error al registrar coche" });
-    }
-});
-
-// Ruta para ver todos los coches con los datos de su dueño (JOIN)
+// 3. Listar todos los coches con sus dueños (público)
 app.get('/coches-detallados', async (req, res) => {
     try {
         const query = `
@@ -89,55 +56,15 @@ app.get('/coches-detallados', async (req, res) => {
         const result = await pool.query(query);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
-        res.status(500).send('Error en el servidor');
-    }
-});
-// RUTA DE LOGIN
-app.post('/login', async (req, res) => {
-    const { email, password } = req.body;
-
-    try {
-        // 1. Buscar el usuario
-        const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
-        
-        if (result.rows.length === 0) {
-            return res.status(401).json({ error: "Usuario no encontrado" });
-        }
-
-        const usuario = result.rows[0];
-
-        // 2. Comparar contraseña encriptada
-        const validPassword = await bcrypt.compare(password, usuario.password);
-        
-        if (!validPassword) {
-            return res.status(401).json({ error: "Contraseña incorrecta" });
-        }
-
-        // 3. Generar el Token (JWT)
-        const token = jwt.sign(
-            { id: usuario.id, nombre: usuario.nombre }, 
-            SECRET_KEY, 
-            { expiresIn: '2h' }
-        );
-
-        res.json({
-            mensaje: "Login exitoso ✅",
-            token: token
-        });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error en el login" });
+        res.status(500).json({ error: "Error al obtener coches" });
     }
 });
 
-// Ver solo los coches del usuario logueado
+// 4. Ver MI GARAJE (protegido)
 app.get('/mis-coches', autenticarToken, async (req, res) => {
     try {
         const query = 'SELECT * FROM coches WHERE propietario_id = $1';
         const result = await pool.query(query, [req.usuario.id]);
-        
         res.json({
             usuario: req.usuario.nombre,
             total: result.rowCount,
@@ -148,33 +75,77 @@ app.get('/mis-coches', autenticarToken, async (req, res) => {
     }
 });
 
-app.delete('/coches/:id', autenticarToken, async (req, res) => {
-    const cocheId = req.params.id; // El ID que viene en la URL
-    const usuarioId = req.usuario.id; // El ID que viene del Token
+// ==========================================
+// RUTAS POST (Creación / Login)
+// ==========================================
 
+// 1. Registro de usuario (Encripta password)
+app.post('/usuarios', async (req, res) => {
+    const { nombre, email, password } = req.body;
     try {
-        // IMPORTANTE: Solo borra si el ID del coche coincide Y el dueño es quien dice ser
-        const query = 'DELETE FROM coches WHERE id = $1 AND propietario_id = $2';
-        const result = await pool.query(query, [cocheId, usuarioId]);
-
-        if (result.rowCount === 0) {
-            // Si no borró nada, es porque el coche no existe o no es de este usuario
-            return res.status(404).json({ 
-                error: "No se encontró el coche o no tienes permiso para borrarlo" 
-            });
-        }
-
-        res.json({
-            mensaje: "Coche eliminado correctamente 🗑️",
-            id_eliminado: cocheId
-        });
-
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const query = 'INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email';
+        const result = await pool.query(query, [nombre, email, hashedPassword]);
+        res.status(201).json(result.rows[0]);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error al intentar eliminar el coche" });
+        res.status(500).json({ error: "Error al crear usuario (email duplicado?)" });
     }
 });
 
+// 2. Login (Genera Token)
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+        if (result.rows.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
+
+        const usuario = result.rows[0];
+        const validPassword = await bcrypt.compare(password, usuario.password);
+        if (!validPassword) return res.status(401).json({ error: "Contraseña incorrecta" });
+
+        const token = jwt.sign({ id: usuario.id, nombre: usuario.nombre }, SECRET_KEY, { expiresIn: '2h' });
+        res.json({ mensaje: "Login exitoso ✅", token });
+    } catch (err) {
+        res.status(500).json({ error: "Error en el login" });
+    }
+});
+
+// 3. Registrar un coche (protegido)
+app.post('/coches', autenticarToken, async (req, res) => {
+    const { marca, modelo, año } = req.body;
+    try {
+        const query = 'INSERT INTO coches (marca, modelo, año, propietario_id) VALUES ($1, $2, $3, $4) RETURNING *';
+        const result = await pool.query(query, [marca, modelo, año, req.usuario.id]);
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: "Error al registrar coche" });
+    }
+});
+
+// ==========================================
+// RUTAS DELETE (Eliminación)
+// ==========================================
+
+// 1. Eliminar coche (protegido + comprobación de dueño)
+app.delete('/coches/:id', autenticarToken, async (req, res) => {
+    const cocheId = req.params.id;
+    try {
+        const query = 'DELETE FROM coches WHERE id = $1 AND propietario_id = $2';
+        const result = await pool.query(query, [cocheId, req.usuario.id]);
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: "Coche no encontrado o no te pertenece" });
+        }
+        res.json({ mensaje: "Coche eliminado correctamente 🗑️", id_eliminado: cocheId });
+    } catch (err) {
+        res.status(500).json({ error: "Error al eliminar coche" });
+    }
+});
+
+// ==========================================
+// INICIO DEL SERVIDOR
+// ==========================================
 app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Clave Secreta cargada: ${SECRET_KEY ? "SÍ" : "NO"}`);
 });
