@@ -1,0 +1,13 @@
+# Carpeta de dependencias de Node
+node_modules/
+backend/node_modules/
+
+# Datos de la base de datos local
+postgres_data/
+
+# Variables de entorno (seguridad)
+.env
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db

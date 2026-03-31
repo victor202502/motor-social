@@ -1,0 +1,47 @@
+services:
+  # SERVICIO 1: La Base de Datos
+  motor-db:
+    image: postgres:16
+    container_name: motor-db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: motor_social_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  # SERVICIO 2: Panel de gestión web
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: motor-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@motor.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8080:80"
+    depends_on:
+      - motor-db
+
+  # SERVICIO 3: Tu aplicación Node.js (EL QUE DABA ERROR)
+  motor-app:
+    build: ./backend
+    container_name: motor-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules # Esto protege los módulos internos del contenedor
+    command: npm run dev
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=motor-db
+      - DB_PORT=5432
+      - DB_USER=admin
+      - DB_PASSWORD=password123
+      - DB_NAME=motor_social_db
+    depends_on:
+      - motor-db
