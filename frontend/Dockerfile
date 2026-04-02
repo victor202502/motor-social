@@ -1,8 +1,10 @@
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+
+# Añadimos el flag --legacy-peer-deps para ignorar conflictos menores de versiones
+RUN npm install --legacy-peer-deps
+
 COPY . .
 EXPOSE 5173
-# Vite necesita este flag para aceptar conexiones externas en Docker
-CMD ["npm", "run", "dev", "--", "--host"]
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

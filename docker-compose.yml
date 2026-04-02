@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # SERVICIO 1: La Base de Datos
   motor-db:
@@ -25,7 +27,7 @@ services:
     depends_on:
       - motor-db
 
-  # SERVICIO 3: Tu aplicación Node.js
+  # SERVICIO 3: Tu aplicación Node.js (Backend)
   motor-app:
     build: ./backend
     container_name: motor-app
@@ -46,7 +48,7 @@ services:
     depends_on:
       - motor-db
 
-  # SERVICIO 4: Frontend en React (CORREGIDO LA INDENTACIÓN)
+  # SERVICIO 4: Frontend en React
   motor-front:
     build: ./frontend
     container_name: motor-front
@@ -55,5 +57,9 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    # El --host es vital para que Vite sea accesible fuera del contenedor
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      - VITE_API_URL=http://192.168.0.6:3000
     depends_on:
       - motor-app
