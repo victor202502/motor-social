@@ -11,3 +11,4 @@ postgres_data/
 # Archivos de sistema
 .DS_Store
 Thumbs.db.env
+datos.txt
