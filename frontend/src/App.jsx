@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Car, LogOut, Gauge, Heart, PlusCircle, Globe, LayoutGrid, Camera, X, MessageSquare, Send, LogIn } from 'lucide-react';
 
-const API_URL = "http://192.168.0.6:3000";
+const API_URL = "http://56.228.1.23:3000";
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
