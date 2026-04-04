@@ -12,3 +12,4 @@ postgres_data/
 .DS_Store
 Thumbs.db.env
 datos.txt
+mi-llave-aws.pem
