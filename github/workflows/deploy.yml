@@ -1,0 +1,26 @@
+name: Deploy a AWS
+
+on:
+  push:
+    branches:
+      - main  # Se activa cuando subes algo a la rama main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Desplegar via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          script: |
+            cd ~/motor-social
+            git pull origin main
+            # Levantamos solo los cambios, construyendo si es necesario
+            docker compose up -d --build
+            # Limpiar imágenes antiguas para no llenar el disco de 20GB de AWS
+            docker image prune -f
