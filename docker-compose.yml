@@ -60,6 +60,9 @@ services:
     # El --host es vital para que Vite sea accesible fuera del contenedor
     command: npm run dev -- --host 0.0.0.0
     environment:
-      - VITE_API_URL=http://192.168.0.6:3000
+      - VITE_API_URL=${VITE_API_URL}  # <--- Esto le dice: "Busca el valor en el archivo .env"
+    # O mejor aún, usa env_file:
+    env_file:
+      - ./frontend/.env
     depends_on:
       - motor-app
