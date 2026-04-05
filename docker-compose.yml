@@ -27,42 +27,30 @@ services:
     depends_on:
       - motor-db
 
-  # SERVICIO 3: Tu aplicación Node.js (Backend)
+  # SERVICIO 3: Backend
   motor-app:
     build: ./backend
     container_name: motor-app
+    restart: always  # Añade esto para que si falla, reviva solo
     ports:
       - "3000:3000"
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    command: npm run dev
+    # Quitamos el volume de /app para que use el código de la imagen (más estable)
     env_file:
-      - .env
-    environment:
-      - DB_HOST=motor-db
-      - DB_PORT=5432
-      - DB_USER=admin
-      - DB_PASSWORD=password123
-      - DB_NAME=motor_social_db
+      - ./backend/.env # Asegúrate de que el .env esté dentro de la carpeta backend
     depends_on:
       - motor-db
 
-  # SERVICIO 4: Frontend en React
+  # SERVICIO 4: Frontend
   motor-front:
     build: ./frontend
     container_name: motor-front
+    restart: always
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    # El --host es vital para que Vite sea accesible fuera del contenedor
-    command: npm run dev -- --host 0.0.0.0
-    environment:
-      - VITE_API_URL=${VITE_API_URL}  # <--- Esto le dice: "Busca el valor en el archivo .env"
-    # O mejor aún, usa env_file:
+    # IMPORTANTE: Quitamos la sección 'environment' para que NO pise al 'env_file'
     env_file:
       - ./frontend/.env
+    # El comando debe ser este para que Vite acepte conexiones externas
+    command: npm run dev -- --host 0.0.0.0
     depends_on:
       - motor-app
