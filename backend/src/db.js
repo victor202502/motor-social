@@ -9,4 +9,10 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
+// Sin esto, un error en un cliente inactivo del pool (p.ej. la conexión
+// se cae un instante) puede tumbar todo el proceso de Node.
+pool.on('error', (err) => {
+  console.error('Error inesperado en el pool de PostgreSQL:', err);
+});
+
 module.exports = pool;

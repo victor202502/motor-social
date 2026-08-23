@@ -1,21 +1,27 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogIn, Mail, Lock, Car } from 'lucide-react';
 
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [enviando, setEnviando] = useState(false);
     const { login } = useAuth();
+    const { mostrarToast } = useToast();
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setEnviando(true);
         try {
             await login(email, password);
             navigate('/');
         } catch (err) {
-            alert("Error: Usuario o contraseña incorrectos");
+            mostrarToast("Usuario o contraseña incorrectos", "error");
+        } finally {
+            setEnviando(false);
         }
     };
 
@@ -59,8 +65,8 @@ export default function Login() {
                         </div>
                     </div>
 
-                    <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 transition transform active:scale-95 shadow-lg shadow-red-900/20">
-                        <LogIn size={20} /> ENTRAR AL GARAJE
+                    <button type="submit" disabled={enviando} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 transition transform active:scale-95 shadow-lg shadow-red-900/20">
+                        <LogIn size={20} /> {enviando ? "ENTRANDO..." : "ENTRAR AL GARAJE"}
                     </button>
                 </form>
 

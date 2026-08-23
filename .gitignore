@@ -10,6 +10,11 @@ postgres_data/
 
 # Archivos de sistema
 .DS_Store
-Thumbs.db.env
+Thumbs.db
+.env
 datos.txt
 mi-llave-aws.pem
+
+# Fotos subidas por los usuarios (ahora persisten vía volumen Docker, no vía git)
+backend/uploads/*
+!backend/uploads/.gitkeep

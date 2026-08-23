@@ -1,20 +1,26 @@
 import React, { useState } from 'react';
 import api from '../services/api';
+import { useToast } from '../context/ToastContext';
 import { useNavigate } from 'react-router-dom';
 import { UserPlus, Mail, Lock, User } from 'lucide-react';
 
 export default function Register() {
     const [form, setForm] = useState({ nombre: '', email: '', password: '' });
+    const [enviando, setEnviando] = useState(false);
+    const { mostrarToast } = useToast();
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setEnviando(true);
         try {
             await api.post('/usuarios', form);
-            alert("Registro exitoso, ahora inicia sesión");
+            mostrarToast("Registro completado, ahora inicia sesión", "exito");
             navigate('/login');
         } catch (err) {
-            alert("Error al registrar: ¿Email ya existe?");
+            mostrarToast(err.response?.data?.error || "Error al registrar", "error");
+        } finally {
+            setEnviando(false);
         }
     };
 
@@ -50,8 +56,8 @@ export default function Register() {
                             onChange={e => setForm({...form, password: e.target.value})}
                         />
                     </div>
-                    <button className="w-full bg-white text-black font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-200 transition">
-                        <UserPlus size={20} /> REGISTRARSE
+                    <button disabled={enviando} className="w-full bg-white text-black font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-200 disabled:opacity-50 transition">
+                        <UserPlus size={20} /> {enviando ? "CREANDO..." : "REGISTRARSE"}
                     </button>
                 </form>
             </div>

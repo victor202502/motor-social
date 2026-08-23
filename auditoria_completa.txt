@@ -1,0 +1,1075 @@
+======================================================================
+ESTRUCTURA DEL PROYECTO (Excluyendo node_modules)
+======================================================================
+
+.dockerignore
+.env
+.env example
+.\analisis_motor.txt
+.\auditoria_completa.txt
+.\datos.txt
+.\docker-compose.yml
+.\docker-entrypoint.sh
+.\Dockerfile
+.\mi-llave-aws.pem
+.\schema.sql
+.\backend\.env
+.\backend\Dockerfile
+.\backend\package-lock.json
+.\backend\package.json
+.\backend\src\db.js
+.\backend\src\index.js
+.\backend\uploads\1775158672812.jpg
+.\backend\uploads\1775231488236.jpg
+.\frontend\.env
+.\frontend\Dockerfile
+.\frontend\eslint.config.js
+.\frontend\index.html
+.\frontend\package-lock.json
+.\frontend\package.json
+.\frontend\postcss.config.js
+.\frontend\README.md
+.\frontend\tailwind.config.js
+.\frontend\vite.config.js
+.\frontend\public\favicon.svg
+.\frontend\public\icons.svg
+.\frontend\src\App.css
+.\frontend\src\App.jsx
+.\frontend\src\index.css
+.\frontend\src\main.jsx
+.\frontend\src\assets\hero.png
+.\frontend\src\assets\react.svg
+.\frontend\src\assets\vite.svg
+.\frontend\src\components\Navbar.jsx
+.\frontend\src\context\AuthContext.jsx
+.\frontend\src\pages\CreatePost.jsx
+.\frontend\src\pages\Feed.jsx
+.\frontend\src\pages\Login.jsx
+.\frontend\src\pages\Register.jsx
+.\frontend\src\services\api.js
+.\nginx\default.conf
+
+======================================================================
+ARCHIVO: Dockerfile
+======================================================================
+
+# ETAPA 1: Compilar Frontend React/Vite
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ .
+# Al dejar VITE_API_URL vacío, Axios usará rutas relativas (ej: /coches en vez de http://host/coches)
+ENV VITE_API_URL=""
+RUN npm run build
+
+# ETAPA 2: Preparar Backend + PostgreSQL
+FROM node:20-alpine
+
+# Instalar PostgreSQL y utilidades
+RUN apk add --no-cache postgresql postgresql-contrib bash su-exec
+
+WORKDIR /app
+
+# Instalar dependencias del Backend
+COPY backend/package*.json ./
+RUN npm install
+COPY backend/ .
+
+# Copiar el Frontend compilado a la carpeta public del backend
+COPY --from=frontend-builder /app/dist ./public
+
+# TRUCO MÁGICO: Inyectar Express para que sirva el Frontend compilado sin tocar tu código
+# Añadimos express.static y un comodín para React Router justo antes del app.listen
+RUN sed -i 's/app.listen/app.use(express.static("public"));\napp.get("*", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "index.html")));\napp.listen/g' src/index.js
+
+# Preparar carpetas y permisos
+COPY docker-entrypoint.sh /usr/local/bin/
+COPY schema.sql /app/schema.sql
+
+RUN mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql && \
+    mkdir -p /var/lib/postgresql/data && chown -R postgres:postgres /var/lib/postgresql/data && \
+    mkdir -p /app/uploads && chown -R node:node /app/uploads
+
+EXPOSE 3000
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+======================================================================
+ARCHIVO: docker-entrypoint.sh
+======================================================================
+
+#!/bin/bash
+set -e
+
+echo ">>> Inicializando PostgreSQL..."
+if [ -z "$(ls -A /var/lib/postgresql/data)" ]; then
+    su-exec postgres initdb -D /var/lib/postgresql/data
+fi
+
+echo ">>> Arrancando PostgreSQL en background..."
+su-exec postgres pg_ctl start -D /var/lib/postgresql/data -l /var/lib/postgresql/logfile
+
+# Esperar a que la BBDD esté lista
+until su-exec postgres pg_isready; do sleep 1; done
+
+echo ">>> Configurando BD y usuario..."
+su-exec postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname = 'admin'" | grep -q 1 || \
+    su-exec postgres psql -c "CREATE USER admin WITH SUPERUSER PASSWORD 'password123';"
+
+su-exec postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'motor_social_db'" | grep -q 1 || \
+    su-exec postgres psql -c "CREATE DATABASE motor_social_db OWNER admin;"
+
+# Importar las tablas si la base de datos está recién creada
+TABLE_COUNT=$(su-exec postgres psql -d motor_social_db -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
+if [ "$TABLE_COUNT" -eq "0" ] && [ -f "/app/schema.sql" ]; then
+    echo ">>> Importando tablas..."
+    su-exec postgres psql -d motor_social_db -f /app/schema.sql
+fi
+
+echo ">>> Arrancando Express Backend..."
+# Forzar las variables locales
+export DB_HOST=127.0.0.1
+export DB_PORT=5432
+export DB_USER=admin
+export DB_PASSWORD=password123
+export DB_NAME=motor_social_db
+export JWT_SECRET=${JWT_SECRET:-"super_secreto_demo_123"}
+
+exec node src/index.js
+
+======================================================================
+ARCHIVO: schema.sql
+======================================================================
+
+--
+-- PostgreSQL database dump
+--
+
+\restrict sChKGscQuidhrrKc8PXSkUaBrPOdNfs7oiai1FpyRqVhEqzUH0LIL24OAQw9sw6
+
+-- Dumped from database version 16.13 (Debian 16.13-1.pgdg13+1)
+-- Dumped by pg_dump version 16.13 (Debian 16.13-1.pgdg13+1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: coches; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.coches (
+    id integer NOT NULL,
+    marca character varying(50) NOT NULL,
+    modelo character varying(50) NOT NULL,
+    "año" integer,
+    propietario_id integer,
+    descripcion text,
+    foto_url character varying(255)
+);
+
+
+ALTER TABLE public.coches OWNER TO admin;
+
+--
+-- Name: coches_id_seq; Type: SEQUENCE; Schema: public; Owner: admin
+--
+
+CREATE SEQUENCE public.coches_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.coches_id_seq OWNER TO admin;
+
+--
+-- Name: coches_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: admin
+--
+
+ALTER SEQUENCE public.coches_id_seq OWNED BY public.coches.id;
+
+
+--
+-- Name: comentarios; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.comentarios (
+    id integer NOT NULL,
+    coche_id integer,
+    usuario_id integer,
+    contenido text NOT NULL,
+    fecha_registro timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.comentarios OWNER TO admin;
+
+--
+-- Name: comentarios_id_seq; Type: SEQUENCE; Schema: public; Owner: admin
+--
+
+CREATE SEQUENCE public.comentarios_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.comentarios_id_seq OWNER TO admin;
+
+--
+-- Name: comentarios_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: admin
+--
+
+ALTER SEQUENCE public.comentarios_id_seq OWNED BY public.comentarios.id;
+
+
+--
+-- Name: me_gusta; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.me_gusta (
+    usuario_id integer NOT NULL,
+    coche_id integer NOT NULL
+);
+
+
+ALTER TABLE public.me_gusta OWNER TO admin;
+
+--
+-- Name: usuarios; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.usuarios (
+    id integer NOT NULL,
+    nombre character varying(50) NOT NULL,
+    email character varying(100) NOT NULL,
+    password character varying(255) NOT NULL,
+    fecha_registro timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.usuarios OWNER TO admin;
+
+--
+-- Name: usuarios_id_seq; Type: SEQUENCE; Schema: public; Owner: admin
+--
+
+CREATE SEQUENCE public.usuarios_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.usuarios_id_seq OWNER TO admin;
+
+--
+-- Name: usuarios_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: admin
+--
+
+ALTER SEQUENCE public.usuarios_id_seq OWNED BY public.usuarios.id;
+
+
+--
+-- Name: coches id; Type: DEFAULT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.coches ALTER COLUMN id SET DEFAULT nextval('public.coches_id_seq'::regclass);
+
+
+--
+-- Name: comentarios id; Type: DEFAULT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.comentarios ALTER COLUMN id SET DEFAULT nextval('public.comentarios_id_seq'::regclass);
+
+
+--
+-- Name: usuarios id; Type: DEFAULT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.usuarios ALTER COLUMN id SET DEFAULT nextval('public.usuarios_id_seq'::regclass);
+
+
+--
+-- Data for Name: coches; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.coches (id, marca, modelo, "año", propietario_id, descripcion, foto_url) FROM stdin;
+1	Nissan	Skyline GT-R R34	1999	1	El rey del JDM. Stage 2 con 500cv.	\N
+2	Mitsubishi	Lancer Evo IX	2006	2	Preparado para rally. Suspensión de competición.	\N
+3	Porsche	911 GT3 RS	2023	3	Shark Blue. Directo del concesionario al circuito.	\N
+4	Ford	Mustang GT	1967	4	Clásico americano. Motor V8 restaurado a estrenar.	\N
+5	Toyota	GR Yaris	2021	5	El coche definitivo para tramos de montaña.	\N
+6	BMW	M3 E46	2003	6	Laguna Seca Blue. El mejor chasis de la historia de BMW.	\N
+7	Audi	RS6 Avant	2022	7	600cv para llevar a los niños al colegio.	\N
+8	Lamborghini	Huracan STO	2022	8	Aerodinámica extrema para romper el crono.	\N
+9	Ferrari	F40	1987	9	La pura esencia de la conducción sin ayudas.	\N
+10	Subaru	WRX STI	2018	10	Sonido bóxer legendario y tracción total total.	\N
+11	jaguar 	f type	\N	21	rojo	/uploads/1775231488236.jpg
+\.
+
+
+--
+-- Data for Name: comentarios; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.comentarios (id, coche_id, usuario_id, contenido, fecha_registro) FROM stdin;
+1	1	3	¡Menudo Skyline! El R34 es mi coche favorito.	2026-04-03 15:37:50.715273
+2	3	1	Ese GT3 RS en Shark Blue es otro nivel.	2026-04-03 15:37:50.715273
+3	9	2	Nada suena como un F40. Joya histórica.	2026-04-03 15:37:50.715273
+4	4	15	¿Es el 390 o el 289? Precioso Mustang.	2026-04-03 15:37:50.715273
+5	6	12	El E46 sigue siendo el M3 más bonito.	2026-04-03 15:37:50.715273
+6	2	5	¡Dale gas en los tramos! Ese Evo es una bestia.	2026-04-03 15:37:50.715273
+7	7	20	Algún día tendré ese RS6... ¡Vaya sleeper!	2026-04-03 15:37:50.715273
+8	5	11	He probado el GR Yaris y es adictivo. ¡Disfrútalo!	2026-04-03 15:37:50.715273
+\.
+
+
+--
+-- Data for Name: me_gusta; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.me_gusta (usuario_id, coche_id) FROM stdin;
+19	8
+3	8
+17	3
+17	5
+17	8
+9	6
+7	5
+5	4
+13	8
+4	7
+18	3
+16	6
+6	7
+9	7
+18	7
+19	6
+15	9
+17	6
+19	2
+7	10
+16	5
+11	3
+18	4
+8	8
+6	8
+17	1
+9	3
+5	9
+8	4
+20	6
+5	3
+4	2
+17	4
+14	7
+16	2
+12	7
+2	2
+4	5
+2	9
+18	10
+10	7
+14	9
+19	10
+8	7
+14	10
+11	7
+19	3
+7	3
+13	9
+\.
+
+
+--
+-- Data for Name: usuarios; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.usuarios (id, nombre, email, password, fecha_registro) FROM stdin;
+1	Carlos_Rally	carlos_rally@test.com	$2b$10$hymC09t4YnpjXJlJZMXIL.88CSMI0QwP8KIimTkVDxqxAB7u34IKa	2026-04-03 15:37:23.708698
+2	Elena_Drift	elena_drift@test.com	$2b$10$TFn6IAxhRNRZgzApey1xUeFydc0fjTNJY3hv7vhAWK9WmUnYujQE2	2026-04-03 15:37:23.791076
+3	Marc_JDM	marc_jdm@test.com	$2b$10$iLhqnfraOFvcUbeQ.d58ye48WdO/ZlQiwyorPlIULSEc3TfzqTNXm	2026-04-03 15:37:23.880748
+4	Sofia_Turbo	sofia_turbo@test.com	$2b$10$q6bu9Piq1CF1z9y9SRc.feRXnZnfe8Hi827AvqKCzr5tGuIiZpdEi	2026-04-03 15:37:23.956261
+5	Javier_V8	javier_v8@test.com	$2b$10$bgrUfLvuZN8/Ot/LGPqsaugR6WqS7N38sA2P1LYiWQxUMiUf/zWiS	2026-04-03 15:37:24.03101
+6	Lucia_Sport	lucia_sport@test.com	$2b$10$x.4OXCFKf//1of8IHOB16eriYOXQHg6GTBMKj3wZTNijBD4FPFAsG	2026-04-03 15:37:24.104967
+7	Pablo_Nitro	pablo_nitro@test.com	$2b$10$y.hQFqRuwVJWXIxUYCapmeo2ub3ALBu4sA7MT2iOYMAkF6MvmcQY.	2026-04-03 15:37:24.178474
+8	Marta_Classic	marta_classic@test.com	$2b$10$aC9lKw3L2Sfq.mBLWtED3OXZkC9VjJtwZCU4TAbe9dLF60GxuF0sC	2026-04-03 15:37:24.256216
+9	Adrian_Supercar	adrian_supercar@test.com	$2b$10$GEw..FkferYbup41w9IwBuXnLBJuHD4QvMit/FXwrS9CsBbU976Xe	2026-04-03 15:37:24.331623
+10	Sara_F1	sara_f1@test.com	$2b$10$iiLM1AfczfmEig8ByCN/k.uIJsar0W0FV9vkdh4n4WUgS1dhi60va	2026-04-03 15:37:24.409215
+11	Dani_Offroad	dani_offroad@test.com	$2b$10$3mam4XB6RPB20wVaGHRCA.na6GNNNZ3bbiEi.BEzGVV5vLolU5wUG	2026-04-03 15:37:24.488872
+12	Ivan_GTI	ivan_gti@test.com	$2b$10$7mrRyFlkb4.TfXYv97EKnOX3fdfgf85IDJ2uv8PiuwWQsCHm0DNx6	2026-04-03 15:37:24.570565
+13	Raul_Tuning	raul_tuning@test.com	$2b$10$oJjL25eUmJ8StsToRA7z7.oYLGmvHHP/eNXs2DkIsuid1nQpauu4m	2026-04-03 15:37:24.656872
+14	Nerea_Luxury	nerea_luxury@test.com	$2b$10$nUSrEZ3yrH9grfpuhzQgROyDL4iImeyH1NfECXwC1.a4vB1kaT3Q2	2026-04-03 15:37:24.736347
+15	Hugo_Drift	hugo_drift@test.com	$2b$10$C3oz/niU3BXpW0lguiYQuOmtADbu5b1qNwRscXQD9t3RDnrqvFI7u	2026-04-03 15:37:24.813194
+16	Paula_Evo	paula_evo@test.com	$2b$10$pQFi/ab9ifJ3pumaenWBu.5rvj5BfsYasm1y9Ud.1nCT129yi4O5m	2026-04-03 15:37:24.890954
+17	Ruben_Quattro	ruben_quattro@test.com	$2b$10$F4/Hzbar3YL71GygNbYxEub/pF74xd4bdYvt1OxsNfdEreTNCAb7y	2026-04-03 15:37:24.966469
+18	Clara_Mpower	clara_mpower@test.com	$2b$10$BB8BOSa5Z26tvsexZUf9COY/CIexPJCnhiFF7clTGjSu93HF6Nwr6	2026-04-03 15:37:25.041567
+19	Mario_Stance	mario_stance@test.com	$2b$10$OW1/Epgyr.8mlWz6WXTayuwxMekONVTaVZhXioalAkkrZ6dkmOiiy	2026-04-03 15:37:25.152888
+20	Alba_Jap	alba_jap@test.com	$2b$10$YCBV5Nd7JdkqzHObGqtoDegHSVHbCdjx6RpYzl5d/eloy8TBIE8iu	2026-04-03 15:37:25.244113
+21	Victor	victor@test.com	$2b$10$MEBz2toy270oBHajjYxzye2viJW9/Yv39xNjDiEJzAcGVmT2L/Bsq	2026-04-03 15:50:49.374629
+\.
+
+
+--
+-- Name: coches_id_seq; Type: SEQUENCE SET; Schema: public; Owner: admin
+--
+
+SELECT pg_catalog.setval('public.coches_id_seq', 11, true);
+
+
+--
+-- Name: comentarios_id_seq; Type: SEQUENCE SET; Schema: public; Owner: admin
+--
+
+SELECT pg_catalog.setval('public.comentarios_id_seq', 8, true);
+
+
+--
+-- Name: usuarios_id_seq; Type: SEQUENCE SET; Schema: public; Owner: admin
+--
+
+SELECT pg_catalog.setval('public.usuarios_id_seq', 21, true);
+
+
+--
+-- Name: coches coches_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.coches
+    ADD CONSTRAINT coches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: comentarios comentarios_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.comentarios
+    ADD CONSTRAINT comentarios_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: me_gusta me_gusta_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.me_gusta
+    ADD CONSTRAINT me_gusta_pkey PRIMARY KEY (usuario_id, coche_id);
+
+
+--
+-- Name: usuarios usuarios_email_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.usuarios
+    ADD CONSTRAINT usuarios_email_key UNIQUE (email);
+
+
+--
+-- Name: usuarios usuarios_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.usuarios
+    ADD CONSTRAINT usuarios_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: coches coches_propietario_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.coches
+    ADD CONSTRAINT coches_propietario_id_fkey FOREIGN KEY (propietario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE;
+
+
+--
+-- Name: comentarios comentarios_coche_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.comentarios
+    ADD CONSTRAINT comentarios_coche_id_fkey FOREIGN KEY (coche_id) REFERENCES public.coches(id) ON DELETE CASCADE;
+
+
+--
+-- Name: comentarios comentarios_usuario_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.comentarios
+    ADD CONSTRAINT comentarios_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE;
+
+
+--
+-- Name: me_gusta me_gusta_coche_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.me_gusta
+    ADD CONSTRAINT me_gusta_coche_id_fkey FOREIGN KEY (coche_id) REFERENCES public.coches(id) ON DELETE CASCADE;
+
+
+--
+-- Name: me_gusta me_gusta_usuario_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.me_gusta
+    ADD CONSTRAINT me_gusta_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES public.usuarios(id) ON DELETE CASCADE;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict sChKGscQuidhrrKc8PXSkUaBrPOdNfs7oiai1FpyRqVhEqzUH0LIL24OAQw9sw6
+
+
+======================================================================
+ARCHIVO: backend/package.json
+======================================================================
+
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.1",
+    "pg": "^8.13.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
+
+======================================================================
+ARCHIVO: C:\Users\Victor\Documents\vsc\proyects\motor-social\backend\src\db.js
+======================================================================
+
+const { Pool } = require('pg');
+
+// Usaremos variables de entorno que definiremos en Docker
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+});
+
+module.exports = pool;
+
+======================================================================
+ARCHIVO: C:\Users\Victor\Documents\vsc\proyects\motor-social\backend\src\index.js
+======================================================================
+
+require('dotenv').config();
+const express = require('express');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const pool = require('./db');
+
+const app = express();
+
+// --- CONFIGURACIÓN DE FOTOS ---
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => { cb(null, 'uploads/'); },
+    filename: (req, file, cb) => { cb(null, Date.now() + path.extname(file.originalname)); }
+});
+const upload = multer({ storage: storage });
+
+// --- MIDDLEWARES ---
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.JWT_SECRET;
+
+const autenticarToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: "No hay token" });
+
+    jwt.verify(token, SECRET_KEY, (err, usuario) => {
+        if (err) return res.status(403).json({ error: "Token inválido" });
+        req.usuario = usuario;
+        next();
+    });
+};
+
+// --- RUTAS DE USUARIOS ---
+app.post('/usuarios', async (req, res) => {
+    const { nombre, email, password } = req.body;
+    const hashed = await bcrypt.hash(password, 10);
+    const result = await pool.query('INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email', [nombre, email, hashed]);
+    res.json(result.rows[0]);
+});
+
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
+    const valid = await bcrypt.compare(password, result.rows[0].password);
+    if (!valid) return res.status(401).json({ error: "Password incorrecta" });
+    const token = jwt.sign({ id: result.rows[0].id, nombre: result.rows[0].nombre }, SECRET_KEY, { expiresIn: '24h' });
+    res.json({ token });
+});
+
+// --- RUTAS DE COCHES ---
+app.get('/coches-detallados', async (req, res) => {
+    try {
+        const query = `
+            SELECT coches.*, usuarios.nombre as nombre_propietario,
+            (SELECT COUNT(*) FROM me_gusta WHERE coche_id = coches.id) as total_likes
+            FROM coches 
+            JOIN usuarios ON coches.propietario_id = usuarios.id
+            ORDER BY coches.id DESC`;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/mis-coches', autenticarToken, async (req, res) => {
+    const result = await pool.query('SELECT * FROM coches WHERE propietario_id = $1 ORDER BY id DESC', [req.usuario.id]);
+    res.json({ garaje: result.rows });
+});
+
+app.post('/coches', autenticarToken, upload.single('foto'), async (req, res) => {
+    const { marca, modelo, año, descripcion } = req.body;
+    const foto_url = req.file ? `/uploads/${req.file.filename}` : null;
+    const query = `INSERT INTO coches (marca, modelo, año, propietario_id, descripcion, foto_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
+    const result = await pool.query(query, [marca, modelo, año, req.usuario.id, descripcion, foto_url]);
+    res.status(201).json(result.rows[0]);
+});
+
+// --- LIKES Y COMENTARIOS ---
+// BUSCA ESTA RUTA Y REEMPLÁZALA
+app.post('/coches/:id/like', autenticarToken, async (req, res) => {
+    try {
+        const check = await pool.query('SELECT * FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+        let liked = false;
+        
+        if (check.rows.length > 0) {
+            await pool.query('DELETE FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+            liked = false;
+        } else {
+            await pool.query('INSERT INTO me_gusta (usuario_id, coche_id) VALUES ($1, $2)', [req.usuario.id, req.params.id]);
+            liked = true;
+        }
+        
+        // Devolvemos el estado actual para que el Front se entere
+        res.json({ success: true, liked: liked });
+    } catch (err) { res.status(500).json({ error: "Error" }); }
+});
+
+app.get('/coches/:id/comentarios', async (req, res) => {
+    const query = `
+        SELECT comentarios.*, usuarios.nombre as autor 
+        FROM comentarios 
+        JOIN usuarios ON comentarios.usuario_id = usuarios.id 
+        WHERE coche_id = $1 ORDER BY fecha_registro ASC`;
+    const result = await pool.query(query, [req.params.id]);
+    res.json(result.rows);
+});
+
+app.post('/coches/:id/comentarios', autenticarToken, async (req, res) => {
+    const { contenido } = req.body;
+    const query = `INSERT INTO comentarios (coche_id, usuario_id, contenido) VALUES ($1, $2, $3) RETURNING *`;
+    const result = await pool.query(query, [req.params.id, req.usuario.id, contenido]);
+    res.json(result.rows[0]);
+});
+
+app.listen(PORT, () => console.log(`Servidor rugiendo en el puerto ${PORT}`));
+
+======================================================================
+ARCHIVO: frontend/package.json
+======================================================================
+
+{
+  "name": "motor-social-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "framer-motion": "^11.0.3",
+    "lucide-react": "^0.344.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
+    "vite": "^5.1.0"
+  }
+}
+
+======================================================================
+ARCHIVO: frontend/vite.config.js
+======================================================================
+
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: ['motorsocial.duckdns.org'] // <-- ESTO ES LO QUE FALTA
+  }
+})
+
+======================================================================
+ARCHIVO: frontend/src/services/api.js
+======================================================================
+
+import axios from 'axios';
+
+const API_URL = import.meta.env.VITE_API_URL;
+
+const api = axios.create({
+    baseURL: API_URL,
+});
+
+// Automatically attach token to requests if it exists
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+export default api;
+
+======================================================================
+ARCHIVO: frontend/src/main.jsx
+======================================================================
+
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+======================================================================
+ARCHIVO: frontend/src/App.jsx
+======================================================================
+
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Car, LogOut, Gauge, Heart, PlusCircle, Globe, LayoutGrid, Camera, X, MessageSquare, Send, LogIn } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL;
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [coches, setCoches] = useState([]);
+  const [tab, setTab] = useState('global'); 
+  const [showModalAdd, setShowModalAdd] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false); 
+  const [authMode, setAuthMode] = useState('login'); 
+  const [selectedCar, setSelectedCar] = useState(null); 
+  const [comments, setComments] = useState([]);
+  const [newComment, setNewComment] = useState("");
+  
+  const [authData, setAuthData] = useState({ nombre: '', email: '', password: '' });
+  const [nuevoCoche, setNuevoCoche] = useState({ marca: '', modelo: '', año: 2024, descripcion: '', foto: null });
+
+  useEffect(() => { fetchData(); }, [tab, token]);
+
+  const fetchData = async () => {
+    try {
+      const url = tab === 'global' ? `${API_URL}/coches-detallados` : `${API_URL}/mis-coches`;
+      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+      const res = await axios.get(url, config);
+      setCoches(tab === 'global' ? res.data : res.data.garaje);
+    } catch (err) { console.error(err); }
+  };
+
+  // --- FUNCIÓN DE IMÁGENES CORREGIDA ---
+  const getImagenCoche = (url, id, marca = 'car') => {
+    // 1. Si hay una foto real subida al servidor
+    if (url && !url.startsWith('http')) return `${API_URL}${url}`;
+    
+    // 2. Si hay una URL de Unsplash vieja en la DB (las que metimos por SQL), 
+    // la ignoramos porque Unsplash Source ya no va bien, o la dejamos si es URL directa.
+    if (url && url.startsWith('http')) return url;
+
+    // 3. Placeholder dinámico usando LoremFlickr (Mucho más fiable que Unsplash)
+    // Usamos 'lock' con el ID del coche para que la foto sea SIEMPRE la misma para ese coche pero distinta de los demás
+    return `https://loremflickr.com/800/600/${marca.toLowerCase()},car/all?lock=${id}`;
+  };
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    try {
+      const endpoint = authMode === 'login' ? '/login' : '/usuarios';
+      const res = await axios.post(`${API_URL}${endpoint}`, authData);
+      if (authMode === 'login') {
+        setToken(res.data.token);
+        localStorage.setItem('token', res.data.token);
+        setShowAuthModal(false);
+      } else {
+        alert("¡Registro completado! Ya puedes entrar.");
+        setAuthMode('login');
+      }
+    } catch (err) { alert(err.response?.data?.error || "Error"); }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    localStorage.removeItem('token');
+    setTab('global');
+    setSelectedCar(null);
+  };
+
+  const handleAddCar = async (e) => {
+    e.preventDefault();
+    const formData = new FormData();
+    Object.keys(nuevoCoche).forEach(key => {
+      if (nuevoCoche[key]) formData.append(key, nuevoCoche[key]);
+    });
+    try {
+      await axios.post(`${API_URL}/coches`, formData, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+      });
+      setShowModalAdd(false);
+      fetchData();
+    } catch (err) { alert("Error al subir"); }
+  };
+
+  const handleLike = async (e, id) => {
+    if (e) e.stopPropagation();
+    if (!token) return alert("Loguéate primero 🏎️");
+    try {
+      const res = await axios.post(`${API_URL}/coches/${id}/like`, {}, { 
+        headers: { Authorization: `Bearer ${token}` } 
+      });
+      fetchData();
+      if (selectedCar && selectedCar.id === id) {
+        const liked = res.data.liked;
+        const currentLikes = parseInt(selectedCar.total_likes);
+        setSelectedCar({
+          ...selectedCar,
+          total_likes: liked ? currentLikes + 1 : Math.max(0, currentLikes - 1),
+          user_liked: liked
+        });
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const openDetail = async (coche) => {
+    setSelectedCar(coche);
+    const res = await axios.get(`${API_URL}/coches/${coche.id}/comentarios`);
+    setComments(res.data);
+  };
+
+  const postComment = async (e) => {
+    e.preventDefault();
+    if (!newComment.trim()) return;
+    try {
+      const res = await axios.post(`${API_URL}/coches/${selectedCar.id}/comentarios`, 
+        { contenido: newComment }, 
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setComments([...comments, { ...res.data, autor: "Tú" }]);
+      setNewComment("");
+    } catch (err) { alert("Error"); }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      {/* NAVBAR */}
+      <nav className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setTab('global')}>
+            <div className="bg-red-600 p-1.5 rounded-lg"><Car size={20} className="text-white" /></div>
+            <span className="text-lg font-black tracking-tighter uppercase italic">Motor<span className="text-red-500">Social</span></span>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <button onClick={() => setTab('global')} className={`text-xs font-black tracking-widest ${tab === 'global' ? 'text-red-500' : 'text-slate-400'}`}>GLOBAL</button>
+            {token ? (
+              <div className="flex items-center gap-4">
+                <button onClick={() => setTab('mis-coches')} className={`text-xs font-black tracking-widest ${tab === 'mis-coches' ? 'text-red-500' : 'text-slate-400'}`}>MI GARAJE</button>
+                <button onClick={() => setShowModalAdd(true)} className="bg-red-600 p-2 rounded-full"><PlusCircle size={20} /></button>
+                <button onClick={handleLogout} className="text-slate-500 hover:text-white"><LogOut size={20} /></button>
+              </div>
+            ) : (
+              <button onClick={() => setShowAuthModal(true)} className="text-[10px] font-black uppercase tracking-widest bg-slate-800 px-4 py-2 rounded-full">Entrar / Registro</button>
+            )}
+          </div>
+        </div>
+      </nav>
+
+      {/* MURO */}
+      <main className="max-w-7xl mx-auto px-4 py-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+        {coches.map(c => (
+          <div key={c.id} onClick={() => openDetail(c)} className="bg-slate-900 border border-slate-800 rounded-[2.5rem] overflow-hidden cursor-pointer hover:border-slate-600 transition-all group shadow-xl">
+            <div className="relative h-64 overflow-hidden bg-black">
+                <img 
+                  src={getImagenCoche(c.foto_url, c.id, c.marca)} 
+                  className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-all duration-700 group-hover:scale-105" 
+                  alt={c.modelo} 
+                />
+                <div className="absolute top-4 left-4 bg-black/60 px-2 py-1 rounded text-[10px] font-bold uppercase">{c.año}</div>
+            </div>
+            <div className="p-6 flex justify-between items-center">
+              <div>
+                <p className="text-[10px] font-black text-red-500 uppercase tracking-widest">{c.marca}</p>
+                <h3 className="text-xl font-black italic uppercase">{c.modelo}</h3>
+              </div>
+              <div className="flex items-center gap-4 text-slate-500">
+                <div className="flex items-center gap-1.5" onClick={(e) => handleLike(e, c.id)}>
+                    <Heart size={20} className={c.user_liked ? 'text-red-500 fill-red-500' : 'hover:text-red-500'} /> 
+                    <span className="text-xs font-bold">{c.total_likes}</span>
+                </div>
+                <MessageSquare size={20} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </main>
+
+      {/* MODAL DETALLE */}
+      {selectedCar && (
+        <div className="fixed inset-0 bg-black/95 z-[200] flex items-center justify-center p-4">
+          <button onClick={() => setSelectedCar(null)} className="absolute top-6 right-6 text-white"><X size={32} /></button>
+          <div className="bg-slate-900 w-full max-w-5xl h-[85vh] rounded-[2.5rem] overflow-hidden flex flex-col md:flex-row border border-slate-800">
+            <div className="flex-[1.5] bg-black flex items-center justify-center p-4">
+              <img 
+                src={getImagenCoche(selectedCar.foto_url, selectedCar.id, selectedCar.marca)} 
+                className="max-h-full max-w-full object-contain rounded-xl" 
+                alt="" 
+              />
+            </div>
+            <div className="flex-1 flex flex-col border-l border-slate-800">
+              <div className="p-8 border-b border-slate-800">
+                <p className="text-red-500 text-[10px] font-black uppercase mb-2">{selectedCar.marca}</p>
+                <h2 className="text-3xl font-black italic uppercase leading-none mb-4">{selectedCar.modelo}</h2>
+                <p className="text-slate-400 text-sm italic border-l-2 border-red-600 pl-4">"{selectedCar.descripcion || 'Sin descripción.'}"</p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-8 space-y-4">
+                {comments.map(com => (
+                  <div key={com.id} className="text-sm bg-slate-800/30 p-3 rounded-2xl">
+                    <span className="font-black text-red-500 mr-2 uppercase text-[10px]">{com.autor}:</span>
+                    <span className="text-slate-300">{com.contenido}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="p-8 border-t border-slate-800 bg-slate-900/50">
+                <div className="flex items-center gap-4 mb-6">
+                    <Heart onClick={(e) => handleLike(e, selectedCar.id)} size={28} className={`cursor-pointer ${selectedCar.user_liked ? 'text-red-500 fill-red-500' : 'text-white'}`} />
+                    <span className="text-xs font-black uppercase">{selectedCar.total_likes} Likes</span>
+                </div>
+                {token ? (
+                    <form onSubmit={postComment} className="flex gap-2">
+                        <input type="text" value={newComment} onChange={(e) => setNewComment(e.target.value)} placeholder="Comentar..." className="flex-1 bg-slate-800 rounded-2xl px-5 py-3 text-sm focus:outline-none" />
+                        <button type="submit" className="bg-red-600 p-3 rounded-2xl"><Send size={18} /></button>
+                    </form>
+                ) : <p className="text-[10px] text-slate-600 text-center uppercase italic font-black">Identifícate para comentar</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL AUTH */}
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/95 z-[300] flex items-center justify-center p-4">
+          <div className="bg-slate-900 w-full max-w-md p-10 rounded-[3rem] border border-slate-800 relative">
+            <button onClick={() => setShowAuthModal(false)} className="absolute top-8 right-8 text-slate-500"><X size={24} /></button>
+            <div className="flex justify-center gap-10 mb-10 border-b border-slate-800 pb-4">
+              <button onClick={() => setAuthMode('login')} className={`text-xs font-black uppercase ${authMode === 'login' ? 'text-red-500 border-b-2 border-red-500' : 'text-slate-500'}`}>ENTRAR</button>
+              <button onClick={() => setAuthMode('register')} className={`text-xs font-black uppercase ${authMode === 'register' ? 'text-red-500 border-b-2 border-red-500' : 'text-slate-500'}`}>REGISTRO</button>
+            </div>
+            <form onSubmit={handleAuth} className="space-y-4">
+              {authMode === 'register' && ( <input type="text" placeholder="Nombre" className="w-full bg-slate-800 rounded-2xl p-5 text-sm outline-none" onChange={e => setAuthData({...authData, nombre: e.target.value})} required /> )}
+              <input type="email" placeholder="Email" className="w-full bg-slate-800 rounded-2xl p-5 text-sm outline-none" onChange={e => setAuthData({...authData, email: e.target.value})} required />
+              <input type="password" placeholder="Password" className="w-full bg-slate-800 rounded-2xl p-5 text-sm outline-none" onChange={e => setAuthData({...authData, password: e.target.value})} required />
+              <button type="submit" className="w-full bg-red-600 py-5 rounded-2xl font-black text-xs uppercase tracking-widest mt-6 italic">Arrancar</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL AÑADIR */}
+      {showModalAdd && (
+        <div className="fixed inset-0 bg-black/95 z-[200] flex items-center justify-center p-4">
+          <div className="bg-slate-900 p-10 rounded-[3rem] w-full max-w-lg border border-slate-800 relative shadow-2xl">
+             <button onClick={() => setShowModalAdd(false)} className="absolute top-8 right-8 text-slate-500"><X size={24} /></button>
+             <h2 className="text-3xl font-black mb-10 uppercase italic">Nueva Publicación</h2>
+             <form onSubmit={handleAddCar} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                    <input type="text" placeholder="Marca" className="w-full bg-slate-800 p-4 rounded-2xl text-sm" onChange={e => setNuevoCoche({...nuevoCoche, marca: e.target.value})} required />
+                    <input type="text" placeholder="Modelo" className="w-full bg-slate-800 p-4 rounded-2xl text-sm" onChange={e => setNuevoCoche({...nuevoCoche, modelo: e.target.value})} required />
+                </div>
+                <input type="number" placeholder="Año" className="w-full bg-slate-800 p-4 rounded-2xl text-sm" onChange={e => setNuevoCoche({...nuevoCoche, año: e.target.value})} required />
+                <textarea placeholder="Descripción técnica..." className="w-full bg-slate-800 p-4 rounded-2xl text-sm h-32 resize-none" onChange={e => setNuevoCoche({...nuevoCoche, descripcion: e.target.value})} />
+                <div className="relative bg-slate-800 p-8 rounded-2xl border-2 border-dashed border-slate-700 text-center">
+                    <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={e => setNuevoCoche({...nuevoCoche, foto: e.target.files[0]})} />
+                    <Camera className="mx-auto mb-2 text-slate-500" size={40} />
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{nuevoCoche.foto ? nuevoCoche.foto.name : "Subir Fotografía"}</p>
+                </div>
+                <button type="submit" className="w-full bg-red-600 py-5 rounded-2xl font-black uppercase text-xs tracking-widest mt-6">Publicar Ficha</button>
+             </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+export default App;

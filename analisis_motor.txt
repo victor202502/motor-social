@@ -1,0 +1,215 @@
+=== 1A. BACKEND INDEX.JS ===
+require('dotenv').config();
+const express = require('express');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const pool = require('./db');
+
+const app = express();
+
+// --- CONFIGURACIÓN DE FOTOS ---
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => { cb(null, 'uploads/'); },
+    filename: (req, file, cb) => { cb(null, Date.now() + path.extname(file.originalname)); }
+});
+const upload = multer({ storage: storage });
+
+// --- MIDDLEWARES ---
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.JWT_SECRET;
+
+const autenticarToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: "No hay token" });
+
+    jwt.verify(token, SECRET_KEY, (err, usuario) => {
+        if (err) return res.status(403).json({ error: "Token inválido" });
+        req.usuario = usuario;
+        next();
+    });
+};
+
+// --- RUTAS DE USUARIOS ---
+app.post('/usuarios', async (req, res) => {
+    const { nombre, email, password } = req.body;
+    const hashed = await bcrypt.hash(password, 10);
+    const result = await pool.query('INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email', [nombre, email, hashed]);
+    res.json(result.rows[0]);
+});
+
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    if (result.rows.length === 0) return res.status(401).json({ error: "Usuario no encontrado" });
+    const valid = await bcrypt.compare(password, result.rows[0].password);
+    if (!valid) return res.status(401).json({ error: "Password incorrecta" });
+    const token = jwt.sign({ id: result.rows[0].id, nombre: result.rows[0].nombre }, SECRET_KEY, { expiresIn: '24h' });
+    res.json({ token });
+});
+
+// --- RUTAS DE COCHES ---
+app.get('/coches-detallados', async (req, res) => {
+    try {
+        const query = `
+            SELECT coches.*, usuarios.nombre as nombre_propietario,
+            (SELECT COUNT(*) FROM me_gusta WHERE coche_id = coches.id) as total_likes
+            FROM coches 
+            JOIN usuarios ON coches.propietario_id = usuarios.id
+            ORDER BY coches.id DESC`;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/mis-coches', autenticarToken, async (req, res) => {
+    const result = await pool.query('SELECT * FROM coches WHERE propietario_id = $1 ORDER BY id DESC', [req.usuario.id]);
+    res.json({ garaje: result.rows });
+});
+
+app.post('/coches', autenticarToken, upload.single('foto'), async (req, res) => {
+    const { marca, modelo, año, descripcion } = req.body;
+    const foto_url = req.file ? `/uploads/${req.file.filename}` : null;
+    const query = `INSERT INTO coches (marca, modelo, año, propietario_id, descripcion, foto_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`;
+    const result = await pool.query(query, [marca, modelo, año, req.usuario.id, descripcion, foto_url]);
+    res.status(201).json(result.rows[0]);
+});
+
+// --- LIKES Y COMENTARIOS ---
+// BUSCA ESTA RUTA Y REEMPLÁZALA
+app.post('/coches/:id/like', autenticarToken, async (req, res) => {
+    try {
+        const check = await pool.query('SELECT * FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+        let liked = false;
+        
+        if (check.rows.length > 0) {
+            await pool.query('DELETE FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+            liked = false;
+        } else {
+            await pool.query('INSERT INTO me_gusta (usuario_id, coche_id) VALUES ($1, $2)', [req.usuario.id, req.params.id]);
+            liked = true;
+        }
+        
+        // Devolvemos el estado actual para que el Front se entere
+        res.json({ success: true, liked: liked });
+    } catch (err) { res.status(500).json({ error: "Error" }); }
+});
+
+app.get('/coches/:id/comentarios', async (req, res) => {
+    const query = `
+        SELECT comentarios.*, usuarios.nombre as autor 
+        FROM comentarios 
+        JOIN usuarios ON comentarios.usuario_id = usuarios.id 
+        WHERE coche_id = $1 ORDER BY fecha_registro ASC`;
+    const result = await pool.query(query, [req.params.id]);
+    res.json(result.rows);
+});
+
+app.post('/coches/:id/comentarios', autenticarToken, async (req, res) => {
+    const { contenido } = req.body;
+    const query = `INSERT INTO comentarios (coche_id, usuario_id, contenido) VALUES ($1, $2, $3) RETURNING *`;
+    const result = await pool.query(query, [req.params.id, req.usuario.id, contenido]);
+    res.json(result.rows[0]);
+});
+
+app.listen(PORT, () => console.log(`Servidor rugiendo en el puerto ${PORT}`));
+=== 1B. FRONTEND ESTRUCTURA ===
+frontend/Dockerfile
+frontend/.env
+frontend/eslint.config.js
+frontend/.gitignore
+frontend/index.html
+frontend/node_modules/.package-lock.json
+frontend/package.json
+frontend/package-lock.json
+frontend/postcss.config.js
+frontend/public/favicon.svg
+frontend/public/icons.svg
+frontend/README.md
+frontend/src/App.css
+frontend/src/App.jsx
+frontend/src/index.css
+frontend/src/main.jsx
+frontend/tailwind.config.js
+frontend/vite.config.js
+
+=== 1C. VITE CONFIG ===
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: ['motorsocial.duckdns.org'] // <-- ESTO ES LO QUE FALTA
+  }
+})
+=== 2. BASE DE DATOS (MIGRACIONES/SQL) ===
+backend/src/db.js:const pool = new Pool({
+backend/src/index.js:    const result = await pool.query('INSERT INTO usuarios (nombre, email, password) VALUES ($1, $2, $3) RETURNING id, nombre, email', [nombre, email, hashed]);
+backend/src/index.js:    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+backend/src/index.js:        const result = await pool.query(query);
+backend/src/index.js:    const result = await pool.query('SELECT * FROM coches WHERE propietario_id = $1 ORDER BY id DESC', [req.usuario.id]);
+backend/src/index.js:    const result = await pool.query(query, [marca, modelo, año, req.usuario.id, descripcion, foto_url]);
+backend/src/index.js:        const check = await pool.query('SELECT * FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+backend/src/index.js:            await pool.query('DELETE FROM me_gusta WHERE usuario_id = $1 AND coche_id = $2', [req.usuario.id, req.params.id]);
+backend/src/index.js:            await pool.query('INSERT INTO me_gusta (usuario_id, coche_id) VALUES ($1, $2)', [req.usuario.id, req.params.id]);
+backend/src/index.js:    const result = await pool.query(query, [req.params.id]);
+backend/src/index.js:    const result = await pool.query(query, [req.params.id, req.usuario.id, contenido]);
+
+=== 3. VARIABLES DE ENTORNO (SOLO NOMBRES) ===
+[backend/.env]
+JWT_SECRET=
+DB_HOST=
+DB_PORT=
+DB_USER=
+DB_PASSWORD=
+DB_NAME=
+[frontend/.env]
+VITE_API_URL=
+[root .env]
+JWT_SECRET=
+VITE_API_URL=
+
+=== 4. LLAMADAS API FRONTEND ===
+frontend/src/services/api.js:import axios from 'axios';
+frontend/src/services/api.js:const API_URL = import.meta.env.VITE_API_URL;
+frontend/src/services/api.js:const api = axios.create({
+frontend/src/App.jsx:import axios from 'axios';
+frontend/src/App.jsx:const API_URL = import.meta.env.VITE_API_URL;
+frontend/src/App.jsx:      const res = await axios.get(url, config);
+frontend/src/App.jsx:      const res = await axios.post(`${API_URL}${endpoint}`, authData);
+frontend/src/App.jsx:      await axios.post(`${API_URL}/coches`, formData, {
+frontend/src/App.jsx:      const res = await axios.post(`${API_URL}/coches/${id}/like`, {}, { 
+frontend/src/App.jsx:    const res = await axios.get(`${API_URL}/coches/${coche.id}/comentarios`);
+frontend/src/App.jsx:      const res = await axios.post(`${API_URL}/coches/${selectedCar.id}/comentarios`, 
+
+=== 5. ARCHIVOS EN RAIZ ===
+total 72
+drwxrwxr-x  8 victor victor 4096 Aug 12 11:15 .
+drwxrwxr-x  3 victor victor 4096 Mar 23 19:09 ..
+-rw-rw-r--  1 victor victor 8476 Aug 12 11:15 analisis_motor.txt
+drwxrwxr-x  5 victor victor 4096 Apr  5 17:25 backend
+-rw-rw-r--  1 victor victor 5706 Apr  8 17:09 datos.txt
+-rw-rw-r--  1 victor victor 1582 Apr  8 17:00 docker-compose.yml
+-rw-rw-r--  1 victor victor   77 Apr  7 17:16 .env
+-rw-rw-r--  1 victor victor  217 Mar 31 10:52 .env example
+drwxrwxr-x  5 victor victor 4096 Apr  5 17:26 frontend
+drwxrwxr-x  8 victor victor 4096 Apr  8 17:41 .git
+drwxrwxr-x  3 victor victor 4096 Apr  5 15:44 .github
+-rw-rw-r--  1 victor victor  235 Apr  4 20:22 .gitignore
+-r--------  1 victor victor 1678 Apr  4 19:36 mi-llave-aws.pem
+drwxrwxr-x  2 victor victor 4096 Apr  7 17:13 nginx
+drwx------ 19    999 root   4096 Aug 12 11:11 postgres_data
